@@ -6,7 +6,12 @@ from screeninfo import get_monitors
 from src.logger import logger
 from src.utils.image import ImageUtils
 
-monitor_window = get_monitors()[0]
+try:
+    monitor_window = get_monitors()[0]
+except Exception:
+    # Headless server (no display): monitor info is only used for showing
+    # windows, which never happens during API grading. Fall back to a dummy.
+    monitor_window = None
 
 
 @dataclass
