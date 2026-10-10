@@ -9,9 +9,15 @@ from src.utils.image import ImageUtils
 try:
     monitor_window = get_monitors()[0]
 except Exception:
-    # Headless server (no display): monitor info is only used for showing
-    # windows, which never happens during API grading. Fall back to a dummy.
-    monitor_window = None
+    # Headless server (no display): monitor info is only read to size windows
+    # for cv2.imshow, which never runs during API grading. A dummy with sane
+    # dimensions keeps the .width/.height reads below working without a display.
+    @dataclass
+    class _DummyMonitor:
+        width: int = 1920
+        height: int = 1080
+
+    monitor_window = _DummyMonitor()
 
 
 @dataclass
