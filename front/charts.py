@@ -1,14 +1,21 @@
 """Charts for the corrected sheets.
 
-Same story the dashboards-automatizados app tells (desempenho por área, por
-subárea e por questão), built from the ResultsByQuestion sheet instead of a
-hand-made spreadsheet.
+Ported unchanged from the backend's webapp/dashboard.py: desempenho por área,
+por subárea, taxa de acerto por questão and ranking por aluno. The only change
+from the original is that the Resultado constants are defined here instead of
+imported from the old pipeline module, so front/ carries no backend dependency.
+
+Every chart reads the canonical long-format DataFrame (Nome do Aluno, Turma,
+Área, Subárea, Número da questão, Questão, Resposta do aluno, Resultado), which
+is exactly what api_client.long_format_dataframe returns.
 """
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from webapp.pipeline import ACERTO, ERRO, NAO_RESPONDEU, RESULT_ORDER
+# Resultado labels - the values the API sends in the 'Resultado' column
+ACERTO, ERRO, NAO_RESPONDEU = "Acerto", "Erro", "Não Respondeu"
+RESULT_ORDER = [ACERTO, ERRO, NAO_RESPONDEU]
 
 # Status palette - fixed roles, never reused as series colors. The legend and the
 # direct labels carry the meaning too, so nothing rides on hue alone.
@@ -205,3 +212,63 @@ def ranking_by_student(long_results, mode="light", height=None):
     return style(
         fig, mode, height=height or max(240, 44 * len(counts) + 100), bargap=0.45
     )
+
+
+def class_improvement(points, mode="light", per_subject=False, height=430):
+    """Line chart of a class's accuracy across exams, over time.
+
+    `points` is the list the API's /trends endpoint returns: each item has
+    exam_name, sequence/applied_on and an `overall` accuracy, plus a `by_subject`
+    map. With per_subject=False it draws the overall trend; with True it draws one
+    line per subject so subject-level improvement stands out.
+    """
+    if not points:
+        fig = go.Figure()
+        return style(fig, mode, height=height, showlegend=False)
+
+    labels = [p["exam_name"] for p in points]
+
+    fig = go.Figure()
+    if per_subject:
+        subjects = sorted(
+            {name for p in points for name in (p.get("by_subject") or {})}
+        )
+        palette = _subject_palette(subjects, mode)
+        for subject in subjects:
+            fig.add_scatter(
+                x=labels,
+                y=[(p.get("by_subject") or {}).get(subject) for p in points],
+                mode="lines+markers",
+                name=subject,
+                line=dict(width=2, color=palette[subject]),
+                marker=dict(size=8),
+                connectgaps=True,
+                hovertemplate="<b>%{x}</b><br>" + subject + ": %{y:.1f}%<extra></extra>",
+            )
+    else:
+        fig.add_scatter(
+            x=labels,
+            y=[p["overall"]["taxa_acerto"] for p in points],
+            mode="lines+markers+text",
+            name="Turma",
+            text=[f"{p['overall']['taxa_acerto']:.0f}%" for p in points],
+            textposition="top center",
+            line=dict(width=3, color=ACCENT[mode]),
+            marker=dict(size=10),
+            hovertemplate="<b>%{x}</b><br>Taxa de acerto: %{y:.1f}%<extra></extra>",
+        )
+
+    fig.update_xaxes(title_text="", type="category")
+    fig.update_yaxes(title_text="Taxa de acerto (%)", range=[0, 105], dtick=25)
+    return style(fig, mode, height=height, showlegend=per_subject)
+
+
+def _subject_palette(subjects, mode):
+    """Stable, high-contrast colors per subject line."""
+    # Extends the brand pair with a few distinguishable hues for extra subjects
+    base = (
+        ["#3676bb", "#ef7b17", "#2e8b57", "#8e44ad", "#c0392b", "#16a085"]
+        if mode == "light"
+        else ["#4a8ed0", "#d1740f", "#3fbf7f", "#a569bd", "#e07a6a", "#48c9b0"]
+    )
+    return {subject: base[index % len(base)] for index, subject in enumerate(subjects)}

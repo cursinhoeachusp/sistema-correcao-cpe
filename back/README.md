@@ -199,20 +199,39 @@ Alternatively you can also use `python3 main.py -i ./samples/sample1`.
 
 Each example in the samples folder demonstrates different ways in which OMRChecker can be used.
 
-### Interface web (Streamlit)
+### Correção via API + banco de dados
 
-Para corrigir provas sem usar a linha de comando:
+Este backend não tem mais interface própria. Ele expõe:
+
+- **`api/`** — serviço FastAPI (correção, resultados, desempenho, evolução).
+- **`grading/`** — pipeline OMR + ingestão dos resultados no banco.
+- **`data/`** — modelos SQLAlchemy, repositório e migrações (Alembic).
+
+O frontend Streamlit vive em `../front/` e consome esta API. Veja o
+[README da raiz](../README.md) para a arquitetura completa e o passo a passo.
+
+Subir o backend (em um ambiente virtual próprio, sem tocar no Python do sistema):
 
 ```bash
-streamlit run streamlit_app.py
+uv venv .venv && source .venv/bin/activate     # ou: python3 -m venv .venv && source .venv/bin/activate
+uv pip install -r requirements.txt -r requirements-dev.txt
+alembic upgrade head            # cria/atualiza o banco (SQLite por padrão)
+python -m api.app               # API em http://localhost:8001, docs em /docs
+# (equivale a: uvicorn api.app:app --reload --port 8001)
 ```
 
-Na aba **Correção** você envia o gabarito (csv/xlsx) e as imagens das provas; o app roda o
-mesmo pipeline do `main.py`, exporta a planilha `ResultsByQuestion.csv` e alimenta o
-**Dashboard** com o desempenho por área, subárea, questão e aluno.
+A porta padrão é 8001 (`CPE_API_PORT`); o host é `CPE_API_HOST` (padrão
+`127.0.0.1`).
 
-O `template.json` (e o `config.json`, se existir) são lidos direto de `inputs/`, já que a
-folha de resposta é sempre a mesma - para trocar de folha, basta substituir o arquivo lá.
+Banco: sem `CPE_DATABASE_URL`, usa um SQLite local (`cpe_omr.db`). Para PostgreSQL,
+aponte a variável para uma URL `postgresql+psycopg://...` antes de rodar Alembic e
+uvicorn - nenhuma mudança de código é necessária.
+
+Correção por imagem (`POST /gradings`): o pipeline lê `template.json` (e
+`config.json`, se existir) de `inputs/`, já que a folha de resposta é sempre a
+mesma; para trocar de folha, basta substituir o arquivo lá. Se as provas já foram
+corrigidas, `POST /gradings/results-csv` importa uma planilha `ResultsByQuestion`
+direto para o banco.
 
 ### Common Issues
 

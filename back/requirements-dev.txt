@@ -1,0 +1,8 @@
+# Test-only dependencies for the backend.
+# Install into the project venv alongside requirements.txt:
+#   uv pip install -r requirements.txt -r requirements-dev.txt
+pytest>=7.0
+pytest-mock>=3.10
+pytest-snapshot>=0.9.0
+freezegun>=1.2.0
+httpx>=0.27,<0.29

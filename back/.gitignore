@@ -14,3 +14,6 @@ outputs/*
 **/__pycache__
 venv/
 OMRChecker.wiki/
+
+# Local SQLite database (dev default; production uses CPE_DATABASE_URL)
+*.db
