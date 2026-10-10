@@ -21,6 +21,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 from sqlalchemy import (
+    CheckConstraint,
     Date,
     DateTime,
     Float,
@@ -38,6 +39,9 @@ from sqlalchemy.orm import (
 )
 
 # Verdicts as produced by src/evaluation.py and parsed by the grading layer.
+# These three values are the single source of truth for the Answer.verdict
+# CHECK constraint (ck_answer_verdict_valid), enforced on both SQLite and
+# PostgreSQL - see the Answer model and migration 54aeeb1858ea.
 VERDICT_CORRECT = "correct"
 VERDICT_INCORRECT = "incorrect"
 VERDICT_UNMARKED = "unmarked"
@@ -228,4 +232,11 @@ class Answer(Base):
 
     __table_args__ = (
         UniqueConstraint("sheet_id", "question_id", name="uq_answer_sheet_question"),
+        # Pin the verdict to the three canonical states at the database level.
+        # Enforced on PostgreSQL and on SQLite (with CHECKs enabled, which they
+        # are by default). Built from VERDICTS so it can't drift from the code.
+        CheckConstraint(
+            "verdict IN ('%s')" % "', '".join(VERDICTS),
+            name="ck_answer_verdict_valid",
+        ),
     )

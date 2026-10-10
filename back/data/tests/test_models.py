@@ -1,6 +1,9 @@
 """Schema smoke tests: insert one row per table and assert relationships resolve."""
 from datetime import date
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 from data.models import (
     Answer,
     Class,
@@ -11,6 +14,8 @@ from data.models import (
     Subject,
     Subtopic,
     VERDICT_CORRECT,
+    VERDICT_INCORRECT,
+    VERDICT_UNMARKED,
 )
 
 
@@ -87,6 +92,41 @@ def test_relationships_resolve_end_to_end(session):
 def test_graded_at_defaults_on_insert(session):
     answer = _seed(session)
     assert answer.sheet.graded_at is not None
+
+
+@pytest.mark.parametrize(
+    "verdict", [VERDICT_CORRECT, VERDICT_INCORRECT, VERDICT_UNMARKED]
+)
+def test_verdict_check_accepts_canonical_values(session, verdict):
+    answer = _seed(session)
+    # A fresh answer on the same sheet/question-less path: reuse the sheet and
+    # add a second question to avoid the unique (sheet, question) constraint.
+    second_question = Question(exam=answer.question.exam, number=2)
+    session.add(
+        Answer(
+            sheet=answer.sheet,
+            question=second_question,
+            marked_answer="A",
+            verdict=verdict,
+        )
+    )
+    session.commit()  # should not raise
+
+
+def test_verdict_check_rejects_invalid_value(session):
+    answer = _seed(session)
+    second_question = Question(exam=answer.question.exam, number=2)
+    session.add(
+        Answer(
+            sheet=answer.sheet,
+            question=second_question,
+            marked_answer="A",
+            verdict="bogus",  # violates ck_answer_verdict_valid
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.commit()
+    session.rollback()
 
 
 def question_in(questions, number):
