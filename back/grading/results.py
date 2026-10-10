@@ -67,10 +67,24 @@ def guess_meta_columns(results_by_question, scores):
     ]
 
 
+# Portuguese name connectors kept lowercase when deriving a name from a file.
+_NAME_CONNECTORS = {"da", "de", "do", "das", "dos", "e"}
+
+
 def student_name_from_file(file_name):
-    """Turn a sheet file name into a readable student name."""
+    """Turn a sheet file name into a readable student name.
+
+    `Ana_Carolina_Matias_de_Melo.jpg` -> `Ana Carolina Matias de Melo`.
+    Underscores/hyphens become spaces, each word is title-cased, and Portuguese
+    connectors (da, de, do...) stay lowercase. Mirrors the frontend's editor
+    default so the derived name matches what the user previews.
+    """
     stem = Path(str(file_name)).stem
-    return re.sub(r"[_\-]+", " ", stem).strip().title()
+    words = re.sub(r"[_\-]+", " ", stem).strip().split()
+    return " ".join(
+        word.title() if index == 0 or word.lower() not in _NAME_CONNECTORS else word.lower()
+        for index, word in enumerate(words)
+    )
 
 
 def parse_verdict(verdict):

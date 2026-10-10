@@ -150,3 +150,17 @@ def test_names_derived_from_filename_when_missing(session):
     # 'giovanna_santos.png' -> 'Giovanna Santos'
     assert "Giovanna Santos" in names
     assert "Pedro Alves" in names
+
+
+def test_student_name_from_file_formats_full_names():
+    from grading.results import student_name_from_file
+
+    # Underscores -> spaces, title-case, Portuguese connectors stay lowercase
+    assert (
+        student_name_from_file("Ana_Carolina_Matias_de_Melo.jpg")
+        == "Ana Carolina Matias de Melo"
+    )
+    assert student_name_from_file("Joao-Pedro-da-Silva.png") == "Joao Pedro da Silva"
+    assert student_name_from_file("MARIA.png") == "Maria"
+    # A connector as the first word is still capitalised
+    assert student_name_from_file("do_Carmo_Souza.png") == "Do Carmo Souza"

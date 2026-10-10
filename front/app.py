@@ -9,12 +9,33 @@ Uso: streamlit run app.py
 A URL da API vem de CPE_API_URL (padrão http://localhost:8001).
 """
 import datetime as dt
+import re
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 import charts
 from api_client import APIError, CPEClient
+
+# Portuguese name connectors kept lowercase when deriving a name from a file.
+_NAME_CONNECTORS = {"da", "de", "do", "das", "dos", "e"}
+
+
+def student_name_from_file(file_name):
+    """Derive a readable student name from a sheet file name.
+
+    `Ana_Carolina_Matias_de_Melo.jpg` -> `Ana Carolina Matias de Melo`.
+    Underscores/hyphens become spaces, each word is title-cased, and Portuguese
+    connectors (da, de, do...) stay lowercase. Mirrors the backend's fallback so
+    the editor shows the same name that would be stored.
+    """
+    stem = Path(str(file_name)).stem
+    words = re.sub(r"[_\-]+", " ", stem).strip().split()
+    return " ".join(
+        word.title() if index == 0 or word.lower() not in _NAME_CONNECTORS else word.lower()
+        for index, word in enumerate(words)
+    )
 
 st.set_page_config(
     page_title="Corretor de Provas OMR",
@@ -166,7 +187,12 @@ with tab_correcao:
             "Informe o nome e a turma de cada folha. Em branco, o nome vem do arquivo."
         )
         default_rows = [
-            {"Arquivo": f.name, "Nome do Aluno": "", "Turma": ""} for f in exam_files
+            {
+                "Arquivo": f.name,
+                "Nome do Aluno": student_name_from_file(f.name),
+                "Turma": "",
+            }
+            for f in exam_files
         ]
         students_df = st.data_editor(
             pd.DataFrame(default_rows),

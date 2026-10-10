@@ -91,10 +91,23 @@ cd sistema-correcao-cpe
 cd back
 python3 -m venv .venv
 source .venv/bin/activate
-
 pip install --upgrade pip
 pip install -r requirements.txt -r requirements-dev.txt
+deactivate
+
+# Frontend (venv SEPARADO - back e front não compartilham ambiente)
+cd ../front
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt -r requirements-dev.txt
+deactivate
+cd ..
 ```
+
+> O backend e o frontend têm **venvs separados** (`back/.venv` e `front/.venv`)
+> porque pedem versões incompatíveis de `starlette`. Os dois serviços systemd
+> apontam para o venv correspondente, então ambos precisam existir.
 
 **Importante para Oracle Cloud ARM64/AMD64:**
 - Se sua instância for **AMD64**: `pip install opencv-python` funciona normalmente
@@ -124,6 +137,33 @@ EOF
 ```
 
 ## Parte 3: Configurar Serviços (Systemd)
+
+> **Importante (SELinux + diretório home):** no Oracle Linux, um serviço systemd
+> **não consegue executar binários que estão dentro de `/home`** — eles recebem o
+> rótulo SELinux `user_home_t`, e a tentativa falha com
+> `status=203/EXEC: Permission denied` (o serviço fica reiniciando sem parar).
+> Há dois jeitos de resolver; escolha um antes de criar os serviços:
+>
+> **Opção A — relabel do venv (mantém o projeto em `/home/opc`):**
+>
+> ```bash
+> sudo dnf install -y policycoreutils-python-utils   # fornece o `semanage`
+> sudo semanage fcontext -a -t bin_t "/home/opc/sistema-correcao-cpe/back/.venv/bin(/.*)?"
+> sudo semanage fcontext -a -t bin_t "/home/opc/sistema-correcao-cpe/front/.venv/bin(/.*)?"
+> sudo restorecon -Rv /home/opc/sistema-correcao-cpe/back/.venv/bin
+> sudo restorecon -Rv /home/opc/sistema-correcao-cpe/front/.venv/bin
+> ```
+>
+> **Opção B — mover o projeto para `/opt`** (fora do home, sem a restrição):
+>
+> ```bash
+> sudo mv /home/opc/sistema-correcao-cpe /opt/sistema-correcao-cpe
+> sudo chown -R opc:opc /opt/sistema-correcao-cpe
+> # recrie os venvs (os caminhos mudaram) e ajuste os caminhos nos units abaixo
+> ```
+>
+> Os exemplos abaixo usam `/home/opc/...`. Se escolher a Opção B, troque por
+> `/opt/...` em `WorkingDirectory`, `PATH` e `ExecStart`.
 
 ### 8. Criar serviço do backend (FastAPI)
 
@@ -222,10 +262,12 @@ upstream cpe_dashboard {
 
 server {
     listen 80;
-    server_name seu-dominio.com.br;  # ou o IP público da instância
+    server_name 140.238.186.202;  # troque pelo seu IP público ou domínio
 
-    # API FastAPI
+    # API FastAPI em /api/ (ex.: /api/health, /api/docs, /api/results)
+    # O prefixo /api é removido antes de repassar ao backend.
     location /api/ {
+        rewrite ^/api/(.*)$ /$1 break;
         proxy_pass http://cpe_api;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -233,25 +275,15 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Root da API
+    # Streamlit Dashboard na raiz (/)
     location / {
-        proxy_pass http://cpe_api;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Streamlit Dashboard
-    location /dashboard/ {
-        rewrite ^/dashboard/(.*)$ /$1 break;
         proxy_pass http://cpe_dashboard;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        
-        # WebSockets (Streamlit usa)
+
+        # WebSockets (o Streamlit depende disso para atualizar a tela)
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
@@ -261,12 +293,32 @@ server {
 EOF
 ```
 
+> Com esta configuração, o **frontend** (Streamlit) atende na raiz `/` e a
+> **API** em `/api/`. O frontend fala com a API internamente por
+> `http://localhost:8001` (variável `CPE_API_URL` no serviço), então não depende
+> do caminho `/api/` — este é só para você inspecionar a API pelo navegador.
+
 Testar configuração e reiniciar:
 
 ```bash
 sudo nginx -t
 sudo systemctl restart nginx
 ```
+
+### 11.1 Liberar o Nginx no SELinux (OBRIGATÓRIO no Oracle Linux)
+
+O Oracle Linux vem com o SELinux em modo *enforcing*, que **por padrão proíbe o
+Nginx de abrir conexões de rede** para o backend local. Sem este passo, você verá
+**502 Bad Gateway** mesmo com o backend saudável. Habilite a permissão:
+
+```bash
+sudo setsebool -P httpd_can_network_connect 1
+sudo systemctl restart nginx
+```
+
+> Esta é a causa nº 1 de 502 Bad Gateway em instâncias Oracle Linux. Se o
+> `curl http://127.0.0.1:8001/health` responde na instância mas o IP público dá
+> 502, é quase certo que seja isto.
 
 ### 12. Configurar Firewall (firewalld)
 
@@ -281,9 +333,9 @@ sudo firewall-cmd --reload
 
 ### 13. Abrir no navegador
 
-- **Dashboard**: `http://IP_PÚBLICO_DA_INSTÂNCIA/` (ou `http://seu-dominio.com.br/`)
-- **API**: `http://IP_PÚBLICO_DA_INSTÂNCIA/docs` (Swagger UI da FastAPI)
-- **Health check**: `http://IP_PÚBLICO_DA_INSTÂNCIA/health`
+- **Dashboard**: `http://IP_PÚBLICO_DA_INSTÂNCIA/` (Streamlit, na raiz)
+- **API (Swagger UI)**: `http://IP_PÚBLICO_DA_INSTÂNCIA/api/docs`
+- **Health check**: `http://IP_PÚBLICO_DA_INSTÂNCIA/api/health`
 
 ### 14. Fazer o primeiro upload de prova
 
@@ -362,6 +414,53 @@ sudo journalctl -u cpe-dashboard -n 50
 
 # Verificar permissões
 ls -la /home/opc/sistema-correcao-cpe
+```
+
+### `status=203/EXEC` + `Permission denied` ao executar o python do venv
+
+Sintoma no log:
+
+```
+Failed to locate executable /home/opc/.../.venv/bin/python: Permission denied
+cpe-api.service: Main process exited, code=exited, status=203/EXEC
+```
+
+Causa: o binário existe, mas está em `/home`, onde o SELinux o rotula como
+`user_home_t` — e um serviço systemd não tem permissão para executar binários com
+esse rótulo. Não é um problema do app; ele nem chega a rodar.
+
+Confirme:
+
+```bash
+ls -lZ /home/opc/sistema-correcao-cpe/back/.venv/bin/python   # mostra user_home_t
+sudo ausearch -m avc -ts recent | grep -i python | tail -5
+```
+
+Corrija relabelando o venv (ou mova o projeto para `/opt`, ver a nota no início
+da Parte 3):
+
+```bash
+sudo dnf install -y policycoreutils-python-utils
+sudo semanage fcontext -a -t bin_t "/home/opc/sistema-correcao-cpe/back/.venv/bin(/.*)?"
+sudo semanage fcontext -a -t bin_t "/home/opc/sistema-correcao-cpe/front/.venv/bin(/.*)?"
+sudo restorecon -Rv /home/opc/sistema-correcao-cpe/back/.venv/bin
+sudo restorecon -Rv /home/opc/sistema-correcao-cpe/front/.venv/bin
+sudo systemctl restart cpe-api cpe-dashboard
+```
+
+### 502 Bad Gateway (Nginx responde, backend não)
+
+O Nginx está no ar, mas não alcança o backend. Verifique nesta ordem:
+
+```bash
+# 1. O backend está rodando e escutando?
+sudo systemctl status cpe-api
+sudo ss -tlnp | grep 8001
+curl -i http://127.0.0.1:8001/health      # responde localmente?
+
+# 2. Se responde local mas o IP público dá 502 -> SELinux bloqueia o Nginx:
+sudo setsebool -P httpd_can_network_connect 1
+sudo systemctl restart nginx
 ```
 
 ### Porta 8001/8501 não responde
