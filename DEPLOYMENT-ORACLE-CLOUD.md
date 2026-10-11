@@ -73,12 +73,25 @@ ssh -i ~/.ssh/oracle.pem opc@150.136.123.456
 
 ### 4. Atualizar o sistema e instalar pacotes base
 
+Pacotes base (nomes do Oracle Linux / `dnf` - **não** use nomes de Debian/Ubuntu
+como `libgl1-mesa-glx`, que não existem aqui):
+
 ```bash
 sudo dnf update -y
 sudo dnf install -y gcc gcc-c++ make cmake git wget unzip \
     python3 python3-pip python3-devel \
-    libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender1
+    policycoreutils-python-utils
 ```
+
+> **OpenCV sem bibliotecas de GUI:** o projeto usa `opencv-python-headless`
+> (ver `back/requirements.txt`), que **não** depende de `libGL`, X11 ou OpenGL.
+> Por isso não é preciso instalar `mesa-libGL`, `libSM`, `libXext` etc. no
+> servidor. Se em algum momento você trocar para o `opencv-python` normal, aí
+> sim precisará destes pacotes (nomes do Oracle Linux):
+>
+> ```bash
+> sudo dnf install -y mesa-libGL glib2 libSM libXext libXrender libgomp
+> ```
 
 ### 5. Criar um ambiente virtual e instalar dependências
 
@@ -110,16 +123,22 @@ cd ..
 > apontam para o venv correspondente, então ambos precisam existir.
 
 **Importante para Oracle Cloud ARM64/AMD64:**
-- Se sua instância for **AMD64**: `pip install opencv-python` funciona normalmente
-- Se for **ARM64** (instância graciosa padrão): use `pip install opencv-python --no-build-isolation` ou compile fontes (mais lento)
+- `requirements.txt` usa `opencv-python-headless`, que tem *wheels* prontos tanto
+  para **AMD64** quanto para **ARM64** - o `pip install` deve funcionar direto nos
+  dois, sem compilar nada.
+- Se o `pip` tentar compilar OpenCV do zero numa instância ARM64 (raro com o
+  headless), confira se `gcc`, `cmake` e `python3-devel` estão instalados (passo 4).
 
 ### 6. Criar o banco de dados e rodar migrações
 
-```bash
-# O padrão usa SQLite em back/cpe_omr.db (basta criar o diretório)
-mkdir -p back
+Ainda dentro de `back/` com o venv ativado:
 
-# Rodar as migrações
+```bash
+cd ~/sistema-correcao-cpe/back
+source .venv/bin/activate
+
+# O padrão usa SQLite em back/cpe_omr.db (criado automaticamente pela migração).
+# Rode a partir de back/ para o arquivo cair no lugar certo.
 alembic upgrade head
 ```
 
@@ -486,14 +505,33 @@ uv pip install "websockets>=11,<13"
 sudo systemctl restart cpe-api
 ```
 
-### OpenCV não instala no ARM64
+### Erro `libGL.so.1: cannot open shared object file`
 
-A Oracle Cloud Always Free usa ARM64 por padrão. Instale sem build isolation:
+O `opencv-python` (versão com GUI) exige bibliotecas de sistema do OpenGL/X11 que
+não existem num servidor headless. O projeto já usa `opencv-python-headless` para
+evitar isso. Se você vir este erro, está com a versão errada do OpenCV instalada:
 
 ```bash
-pip install opencv-python --no-build-isolation
-# Ou compile fontes (levará 20-30 minutos):
-# pip install opencv-python --no-binary opencv-python
+cd ~/sistema-correcao-cpe/back && source .venv/bin/activate
+pip uninstall -y opencv-python
+pip install opencv-python-headless
+sudo systemctl restart cpe-api
+```
+
+### Erro `No enumerators available` / `NoneType object has no attribute 'width'`
+
+Vem do `screeninfo`, que tenta detectar monitores - não há display num servidor.
+O código já trata isso (`src/utils/interaction.py` cai num monitor fictício). Se
+aparecer, confirme que o `src/` está atualizado (`git pull`) e reinicie o serviço.
+
+### `Missing optional dependency 'openpyxl'`
+
+Acontece ao enviar um gabarito `.xlsx`. Já está em `requirements.txt`; se faltar:
+
+```bash
+cd ~/sistema-correcao-cpe/back && source .venv/bin/activate
+pip install openpyxl
+sudo systemctl restart cpe-api
 ```
 
 ## Custos
@@ -507,4 +545,7 @@ Se usar PostgreSQL ou Autonomous Database, verifique os planos gratuitos do Orac
 
 ---
 
-**Dica**: Para o Oracle Cloud, prefira a instância **AMD64** (`VM.Standard.E4.Flex`) em vez de ARM64 se quiser evitar complicações com OpenCV. A flexibilidade de escolher CPU é parte do Always Free.
+**Dica**: com `opencv-python-headless`, tanto **AMD64** (`VM.Standard.E4.Flex`)
+quanto **ARM64** (`VM.Standard.A1.Flex`, o maior Always Free) funcionam sem
+complicação de OpenCV. Escolha pela capacidade: o ARM64 Always Free oferece até
+4 OCPUs e 24 GB de RAM, bem mais folga que o AMD64.
