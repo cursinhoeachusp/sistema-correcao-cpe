@@ -35,7 +35,7 @@ A estrutura fica assim:
 3. Clique em **Create instance**
 4. Configure:
    - **Name**: `correcao-cpe-docker`
-   - **Image**: `Oracle Linux 8`
+   - **Image**: `Ubuntu 22.04` ou `Ubuntu 24.04` (recomendado)
    - **Shape**: `VM.Standard.E4.Flex` ou `VM.Standard.E3.Flex`
    - **OCPUs**: 1
    - **Memory**: 6 GB
@@ -68,41 +68,53 @@ Adicione as regras de entrada:
 ## Parte 2: Conectar na VM
 
 ```bash
-ssh -i ~/.ssh/oracle.pem opc@PUBLIC_IP
+ssh -i ~/.ssh/oracle.pem ubuntu@PUBLIC_IP
 ```
 
 Exemplo:
 
 ```bash
-ssh -i ~/.ssh/oracle.pem opc@150.136.123.456
+ssh -i ~/.ssh/oracle.pem ubuntu@150.136.123.456
 ```
 
 ---
 
-## Parte 3: Instalar Docker no Oracle Linux
+## Parte 3: Instalar Docker no Ubuntu Server
 
 Atualize o sistema:
 
 ```bash
-sudo dnf update -y
+sudo apt update && sudo apt upgrade -y
 ```
 
-Instale as dependências básicas:
+Instale os pacotes necessários:
 
 ```bash
-sudo dnf install -y yum-utils device-mapper-persistent-data lvm2
+sudo apt install -y ca-certificates curl gnupg lsb-release
+```
+
+Adicione a chave GPG oficial do Docker:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
 ```
 
 Adicione o repositório do Docker:
 
 ```bash
-sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 ```
 
 Instale o Docker Engine e o plugin do Compose:
 
 ```bash
-sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 ```
 
 Ative e inicie o serviço:
