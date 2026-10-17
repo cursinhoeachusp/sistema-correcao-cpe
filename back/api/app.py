@@ -212,7 +212,26 @@ def _register_routes(app: FastAPI) -> None:
             )
 
         image_payload = [(f.filename, await f.read()) for f in images]
-        answer_key_frame = _read_answer_key(await answer_key.read(), answer_key.filename)
+        try:
+            answer_key_frame = _read_answer_key(
+                await answer_key.read(), answer_key.filename
+            )
+        except ImportError as error:
+            # Missing Excel engine (openpyxl/xlrd). Surface a clear, actionable
+            # message instead of an opaque 500.
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Não foi possível ler a planilha Excel: dependência ausente "
+                    f"no servidor ({error}). Instale 'openpyxl' ou envie a "
+                    "planilha em CSV."
+                ),
+            )
+        except Exception as error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Planilha do gabarito inválida: {error}",
+            )
         try:
             results, log = grade_and_frame(image_payload, answer_key_frame)
         except Exception as error:

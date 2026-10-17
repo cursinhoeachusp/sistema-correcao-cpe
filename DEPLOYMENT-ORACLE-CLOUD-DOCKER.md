@@ -1,0 +1,364 @@
+# Deployment no Oracle Cloud Free Tier com Docker Compose
+
+Este guia é a versão Docker do deploy do projeto. Ele mantém a configuração anterior em [DEPLOYMENT-ORACLE-CLOUD.md](DEPLOYMENT-ORACLE-CLOUD.md) intacta e oferece uma alternativa mais simples e robusta para Oracle Cloud.
+
+## Quando usar esta abordagem
+
+Use esta opção quando você quiser:
+
+- evitar `systemd` e `venv` separados em `/home`
+- rodar backend e frontend em containers isolados
+- manter o deploy mais previsível e fácil de reiniciar
+- reduzir problemas de SELinux, permissões e dependências do host
+
+## Visão geral da arquitetura
+
+- `api` → container do backend FastAPI
+- `dashboard` → container do frontend Streamlit
+- `nginx` → container de proxy reverso
+- `sqlite-data` → volume persistente para o banco SQLite
+
+A estrutura fica assim:
+
+- frontend público na raiz `/`
+- API pública em `/api/`
+- banco em volume Docker persistente
+
+---
+
+## Parte 1: Criar a instância Oracle Cloud
+
+### 1. Criar a VM
+
+1. Acesse o [Oracle Cloud Console](https://cloud.oracle.com)
+2. Vá em **Compute** → **Instances**
+3. Clique em **Create instance**
+4. Configure:
+   - **Name**: `correcao-cpe-docker`
+   - **Image**: `Oracle Linux 8`
+   - **Shape**: `VM.Standard.E4.Flex` ou `VM.Standard.E3.Flex`
+   - **OCPUs**: 1
+   - **Memory**: 6 GB
+   - **Networking**: VCN com IP público
+   - **SSH keys**: gere ou carregue uma chave pública
+
+### 2. Liberar as portas no firewall da instância
+
+No painel da instância, acesse o **VCN** e depois a **Security List** padrão.
+
+Adicione as regras de entrada:
+
+- `SSH`:
+  - TCP
+  - 22
+  - origem: `0.0.0.0/0`
+
+- `HTTP`:
+  - TCP
+  - 80
+  - origem: `0.0.0.0/0`
+
+- `HTTPS` (opcional, se você for usar TLS):
+  - TCP
+  - 443
+  - origem: `0.0.0.0/0`
+
+---
+
+## Parte 2: Conectar na VM
+
+```bash
+ssh -i ~/.ssh/oracle.pem opc@PUBLIC_IP
+```
+
+Exemplo:
+
+```bash
+ssh -i ~/.ssh/oracle.pem opc@150.136.123.456
+```
+
+---
+
+## Parte 3: Instalar Docker no Oracle Linux
+
+Atualize o sistema:
+
+```bash
+sudo dnf update -y
+```
+
+Instale as dependências básicas:
+
+```bash
+sudo dnf install -y yum-utils device-mapper-persistent-data lvm2
+```
+
+Adicione o repositório do Docker:
+
+```bash
+sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+```
+
+Instale o Docker Engine e o plugin do Compose:
+
+```bash
+sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+Ative e inicie o serviço:
+
+```bash
+sudo systemctl enable --now docker
+sudo systemctl status docker
+```
+
+Adicione seu usuário ao grupo `docker`:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Confirme:
+
+```bash
+docker --version
+docker compose version
+```
+
+---
+
+## Parte 4: Clonar o projeto
+
+```bash
+cd ~
+git clone https://github.com/seu-usuario/sistema-correcao-cpe.git
+cd sistema-correcao-cpe
+```
+
+Se o repositório já estiver no ambiente local, pode simplesmente entrar na pasta raiz do projeto.
+
+---
+
+## Parte 5: Subir o ambiente com Docker Compose
+
+Na raiz do projeto, execute:
+
+```bash
+docker compose up -d --build
+```
+
+Isso vai construir e iniciar:
+
+- backend FastAPI
+- dashboard Streamlit
+- Nginx como proxy reverso
+
+Verifique os containers:
+
+```bash
+docker compose ps
+```
+
+Verifique os logs:
+
+```bash
+docker compose logs -f
+```
+
+Se quiser ver só o backend:
+
+```bash
+docker compose logs -f api
+```
+
+Se quiser ver o dashboard:
+
+```bash
+docker compose logs -f dashboard
+```
+
+---
+
+## Parte 6: Testar o deploy
+
+### API
+
+```bash
+curl -i http://localhost:8001/health
+```
+
+Resposta esperada:
+
+```json
+{"status":"ok"}
+```
+
+### Dashboard direto
+
+```bash
+curl -I http://localhost:8501/
+```
+
+### Acesso pela porta 80 via Nginx
+
+```bash
+curl -i http://localhost/api/health
+```
+
+Ou abra no navegador:
+
+- Dashboard: `http://IP_PUBLICO/`
+- API docs: `http://IP_PUBLICO/api/docs`
+- Health check: `http://IP_PUBLICO/api/health`
+
+---
+
+## Parte 7: Estrutura importante do projeto
+
+Os arquivos relevantes já foram criados para a abordagem Docker:
+
+- [docker-compose.yml](docker-compose.yml)
+- [nginx.conf](nginx.conf)
+- [back/Dockerfile](back/Dockerfile)
+- [front/Dockerfile](front/Dockerfile)
+- [.dockerignore](.dockerignore)
+
+Esses arquivos já deixam o projeto pronto para rodar em Docker sem depender de `systemd`.
+
+---
+
+## Parte 8: Reiniciar, atualizar e manter
+
+### Reiniciar tudo
+
+```bash
+docker compose restart
+```
+
+### Atualizar o código
+
+```bash
+git pull
+
+docker compose up -d --build
+```
+
+### Ver logs
+
+```bash
+docker compose logs -f --tail=200
+```
+
+### Parar tudo
+
+```bash
+docker compose down
+```
+
+### Remover volumes persistentes (cuidado)
+
+```bash
+docker compose down -v
+```
+
+---
+
+## Parte 9: Persistência do SQLite
+
+O SQLite é persistido via volume Docker:
+
+```yaml
+volumes:
+  sqlite-data:
+```
+
+Isso garante que o banco continue existindo mesmo quando o container é recriado.
+
+O banco do backend fica em:
+
+```text
+/app/data/cpe_omr.db
+```
+
+Dentro do container; esse caminho é mapeado para o volume `sqlite-data`.
+
+---
+
+## Parte 10: HTTPS / SSL (opcional)
+
+Se você quiser expor a aplicação com HTTPS, há duas opções boas:
+
+### Opção A — Cloudflare + SSL externo
+
+- use o Cloudflare DNS para apontar o domínio
+- deixe o Cloudflare fazer o TLS
+- mantenha o app atrás do proxy no port 80
+
+### Opção B — Certbot no host, com Nginx externo
+
+Se preferir terminar TLS no host em vez do container, você pode instalar um Nginx no host e configurar proxy reverso para `localhost:8001` e `localhost:8501`.
+
+Mas para deploy simples e rápido em Oracle Cloud, a abordagem recomendada é:
+
+- manter o Docker Compose
+- deixar o Nginx dentro do container
+- usar Cloudflare ou um load balancer com TLS
+
+---
+
+## Troubleshooting
+
+### `docker: permission denied while trying to connect to the Docker daemon socket`
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Container não sobe
+
+```bash
+docker compose logs -f
+```
+
+### Porta 80/443 não acessível
+
+Verifique a Security List da VM e confirme que o VCN está liberando as portas.
+
+### API não responde
+
+```bash
+docker compose logs -f api
+```
+
+### Dashboard não carrega
+
+```bash
+docker compose logs -f dashboard
+```
+
+---
+
+## Vantagens desta abordagem em relação ao systemd
+
+- menos problemas com SELinux
+- menos risco de venv e permissões quebradas em `/home`
+- processo de deploy mais repetível
+- atualização fácil via `git pull` + `docker compose up -d --build`
+- isolamento real entre backend e frontend
+
+---
+
+## Recomendação final
+
+Para Oracle Cloud Free Tier, a opção mais simples e estável é:
+
+- VM Oracle Linux
+- Docker + Docker Compose
+- Nginx em container
+- SQLite em volume Docker
+
+Essa abordagem costuma ser bem mais confiável do que manter dois `systemd` separados e lidar com venvs e SELinux.
+
+> Esta guia é a alternativa Docker da versão anterior em [DEPLOYMENT-ORACLE-CLOUD.md](DEPLOYMENT-ORACLE-CLOUD.md). Ambas podem coexistir: a antiga serve como referência de systemd, e esta serve como caminho recomendado para deploy moderno em containers.
