@@ -8,11 +8,13 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import sessionmaker
 
 from api.app import create_app, get_db
-from data.database import get_engine, init_db
+from db.database import get_engine, init_db
 
 
 @pytest.fixture
-def client():
+def client(tmp_path, monkeypatch):
+    # Grading files (raw csv, marked sheets) go to a throwaway folder
+    monkeypatch.setenv("CPE_ARTIFACTS_DIR", str(tmp_path / "gradings"))
     # A single shared in-memory engine for the life of one test
     engine = get_engine(url="sqlite:///:memory:")
     init_db(engine)

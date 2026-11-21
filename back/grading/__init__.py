@@ -1,12 +1,17 @@
 """Grading layer for the CPE OMR system.
 
-Wraps the OMR pipeline (src/entry.py) and translates its ResultsByQuestion.csv
+Wraps the OMR pipeline (omrchecker/src/entry.py) and translates its ResultsByQuestion.csv
 output into the long-format contract and into database rows. Split into:
 
 - results.py: parse ResultsByQuestion.csv (verdicts, scores, meta columns) - the
   logic ported out of the old webapp/pipeline.py so it is reusable off the UI.
 - ingest.py: turn a parsed results sheet + student/exam metadata into
-  data.repositories writes.
+  db.repositories writes.
+- sheets.py: the CPE answer-sheet templates (folha-cpe/) per exam size.
+- pipeline.py: runs the engine on uploaded files in a temporary folder.
+- bridge.py: what the API calls - picks the template, runs the pipeline and
+  returns the results frame, log and marked images.
+- artifacts.py: the files a grading leaves behind, stored per exam.
 """
 from grading.results import (
     ACERTO,

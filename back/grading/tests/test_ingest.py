@@ -10,7 +10,7 @@ from datetime import date
 
 import pandas as pd
 
-from data.models import (
+from db.models import (
     Answer,
     Class,
     Exam,
@@ -23,7 +23,7 @@ from data.models import (
     VERDICT_INCORRECT,
     VERDICT_UNMARKED,
 )
-from data.repositories import long_format_dataframe
+from db.repositories import long_format_dataframe
 from grading.ingest import SheetMetadata, ingest_results_by_question, ingest_results_csv
 
 RESULTS_CSV = """question,Área,Subárea,Gabarito,giovanna_santos.png,pedro_alves.png
@@ -164,3 +164,19 @@ def test_student_name_from_file_formats_full_names():
     assert student_name_from_file("MARIA.png") == "Maria"
     # A connector as the first word is still capitalised
     assert student_name_from_file("do_Carmo_Souza.png") == "Do Carmo Souza"
+
+
+def test_blank_sheets_names_only_the_unread_ones():
+    import io
+
+    from grading.results import blank_sheets, load_results_by_question
+
+    frame = load_results_by_question(
+        io.StringIO(
+            "question,Gabarito,lida.png,vazia.png,nao_lida.png\n"
+            "score,,1.0,0.0,0\n"
+            "q1,E,correct-E,unmarked,\n"
+            "q2,B,unmarked,unmarked,\n"
+        )
+    )
+    assert blank_sheets(frame) == ["vazia.png", "nao_lida.png"]

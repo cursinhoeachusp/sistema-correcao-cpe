@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from datetime import date
 from typing import Dict, List, Optional
+from urllib.parse import quote
 
 import pandas as pd
 import requests
@@ -19,7 +20,7 @@ import requests
 DEFAULT_BASE_URL = "http://localhost:8001"
 API_URL_ENV = "CPE_API_URL"
 
-# Kept in sync with data.repositories.LONG_FORMAT_COLUMNS
+# Kept in sync with db.repositories.LONG_FORMAT_COLUMNS
 LONG_FORMAT_COLUMNS = [
     "Nome do Aluno",
     "Turma",
@@ -88,6 +89,36 @@ class CPEClient:
     def exams(self) -> List[dict]:
         return self._get("/exams")
 
+    def delete_exam(self, exam_id: int) -> None:
+        """Delete an exam with its results and grading files."""
+        try:
+            response = requests.delete(
+                f"{self.base_url}/exams/{exam_id}", timeout=self.timeout
+            )
+        except requests.RequestException as error:
+            raise APIError(f"Não foi possível contatar a API: {error}") from error
+        if response.status_code != 204:
+            self._json(response)
+
+    def answer_key(self, exam_id: int) -> List[dict]:
+        """The exam's stored gabarito: number, correct_answer, area, subarea."""
+        return self._get(f"/exams/{exam_id}/answer-key")
+
+    def update_answer_key(self, exam_id: int, changes: List[dict]) -> dict:
+        """Change the gabarito of some questions and regrade the exam.
+
+        `changes` is a list of {"number": 36, "correct_answer": "D"}.
+        """
+        try:
+            response = requests.put(
+                f"{self.base_url}/exams/{exam_id}/answer-key",
+                json=changes,
+                timeout=self.timeout,
+            )
+        except requests.RequestException as error:
+            raise APIError(f"Não foi possível contatar a API: {error}") from error
+        return self._json(response)
+
     def classes(self) -> List[dict]:
         return self._get("/classes")
 
@@ -148,10 +179,13 @@ class CPEClient:
         student_names: Optional[Dict[str, str]] = None,
         student_classes: Optional[Dict[str, str]] = None,
         class_turnos: Optional[Dict[str, str]] = None,
+        question_count: Optional[int] = None,
     ) -> dict:
         import json
 
         data = {"exam_name": exam_name}
+        if question_count is not None:
+            data["question_count"] = str(question_count)
         if applied_on is not None:
             data["applied_on"] = applied_on.isoformat()
         if sequence is not None:
@@ -176,10 +210,13 @@ class CPEClient:
         student_names: Optional[Dict[str, str]] = None,
         student_classes: Optional[Dict[str, str]] = None,
         class_turnos: Optional[Dict[str, str]] = None,
+        question_count: Optional[int] = None,
     ) -> dict:
         import json
 
         data = {"exam_name": exam_name}
+        if question_count is not None:
+            data["question_count"] = str(question_count)
         if applied_on is not None:
             data["applied_on"] = applied_on.isoformat()
         if sequence is not None:
@@ -194,6 +231,32 @@ class CPEClient:
         files = [("images", (name, content)) for name, content in images]
         files.append(("answer_key", (answer_key_name, answer_key_bytes)))
         return self._post("/gradings", data=data, files=files)
+
+    # -------------------------------------------------------- grading files
+    def _get_bytes(self, path: str) -> Optional[bytes]:
+        """Raw body of a file endpoint, or None when the API has no such file."""
+        try:
+            response = requests.get(f"{self.base_url}{path}", timeout=self.timeout)
+        except requests.RequestException as error:
+            raise APIError(f"Não foi possível contatar a API: {error}") from error
+        if response.status_code == 404:
+            return None
+        if not response.ok:
+            raise APIError(f"Erro {response.status_code}: {response.text}")
+        return response.content
+
+    def results_by_question_csv(self, exam_id: int) -> Optional[bytes]:
+        """Raw ResultsByQuestion.csv of the exam's latest image grading."""
+        return self._get_bytes(f"/exams/{exam_id}/results-by-question.csv")
+
+    def marked_sheets(self, exam_id: int) -> List[str]:
+        """File names of the sheets with the detected marks drawn on top."""
+        return self._get(f"/exams/{exam_id}/marked-sheets")
+
+    def marked_sheet(self, exam_id: int, file_name: str) -> Optional[bytes]:
+        return self._get_bytes(
+            f"/exams/{exam_id}/marked-sheets/{quote(file_name, safe='')}"
+        )
 
     # ---------------------------------------------------- teacher questions
     def student_subject_performance(self, student_id: int, subject_id: int) -> dict:

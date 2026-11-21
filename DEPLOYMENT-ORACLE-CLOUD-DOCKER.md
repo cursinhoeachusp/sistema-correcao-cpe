@@ -21,7 +21,7 @@ Use esta opção quando você quiser:
 A estrutura fica assim:
 
 - frontend público na raiz `/`
-- API pública em `/api/`
+- API acessível só pelo dashboard, dentro da rede do Docker (não é publicada)
 - banco em volume Docker persistente
 
 ---
@@ -166,6 +166,14 @@ Isso vai construir e iniciar:
 - dashboard Streamlit
 - Nginx como proxy reverso
 
+O container da API cria ou atualiza o banco sozinho ao iniciar
+(`python -m db.migrate`, o equivalente a `alembic upgrade head`); não é
+preciso rodar migrações à mão. O dashboard só sobe depois que a API responde em
+`/health`.
+
+Cada imagem carrega o próprio código: depois de um `git pull`, é o `--build` que
+leva o código novo para os containers.
+
 Verifique os containers:
 
 ```bash
@@ -196,8 +204,10 @@ docker compose logs -f dashboard
 
 ### API
 
+A API não é publicada no host, então o teste roda dentro do container:
+
 ```bash
-curl -i http://localhost:8001/health
+docker compose exec api python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8001/health').read().decode())"
 ```
 
 Resposta esperada:
@@ -215,14 +225,12 @@ curl -I http://localhost:8501/
 ### Acesso pela porta 80 via Nginx
 
 ```bash
-curl -i http://localhost/api/health
+curl -I http://localhost/
 ```
 
 Ou abra no navegador:
 
 - Dashboard: `http://IP_PUBLICO/`
-- API docs: `http://IP_PUBLICO/api/docs`
-- Health check: `http://IP_PUBLICO/api/health`
 
 ---
 
@@ -231,10 +239,12 @@ Ou abra no navegador:
 Os arquivos relevantes já foram criados para a abordagem Docker:
 
 - [docker-compose.yml](docker-compose.yml)
-- [nginx.conf](nginx.conf)
+- [nginx-DEPRECATED.conf](nginx-DEPRECATED.conf) — não é mais usado; o proxy reverso do servidor acessa os containers pela rede `cpe-proxy`
 - [back/Dockerfile](back/Dockerfile)
 - [front/Dockerfile](front/Dockerfile)
-- [.dockerignore](.dockerignore)
+- [back/.dockerignore](back/.dockerignore) e [front/.dockerignore](front/.dockerignore)
+- [back/docker-entrypoint.sh](back/docker-entrypoint.sh) — roda as migrações do banco antes de subir a API
+- [docker-compose.dev.yml](docker-compose.dev.yml) — só para desenvolvimento (código montado do checkout, com reload)
 
 Esses arquivos já deixam o projeto pronto para rodar em Docker sem depender de `systemd`.
 
@@ -287,13 +297,19 @@ volumes:
 
 Isso garante que o banco continue existindo mesmo quando o container é recriado.
 
-O banco do backend fica em:
+O volume `sqlite-data` é montado em `/var/lib/cpe` dentro do container e guarda
+tudo o que precisa sobreviver a um rebuild:
 
 ```text
-/app/data/cpe_omr.db
+/var/lib/cpe/cpe_omr.db      # banco (CPE_DATABASE_URL)
+/var/lib/cpe/gradings/       # ResultsByQuestion.csv e folhas marcadas de cada simulado (CPE_ARTIFACTS_DIR)
 ```
 
-Dentro do container; esse caminho é mapeado para o volume `sqlite-data`.
+> Versões anteriores montavam o volume em `/app/data`, por cima do pacote Python
+> `data` (modelos e migrações; hoje ele se chama `db`), o que fazia o container continuar usando a cópia
+> antiga desse código depois de um `git pull`. O volume é o mesmo: o
+> `cpe_omr.db` existente aparece em `/var/lib/cpe/cpe_omr.db` sem migração
+> manual. Basta `docker compose up -d --build`.
 
 ---
 
@@ -309,7 +325,7 @@ Se você quiser expor a aplicação com HTTPS, há duas opções boas:
 
 ### Opção B — Certbot no host, com Nginx externo
 
-Se preferir terminar TLS no host em vez do container, você pode instalar um Nginx no host e configurar proxy reverso para `localhost:8001` e `localhost:8501`.
+Se preferir terminar TLS no host em vez do container, você pode instalar um Nginx no host e configurar proxy reverso para `localhost:8501` (a API não é publicada no host).
 
 Mas para deploy simples e rápido em Oracle Cloud, a abordagem recomendada é:
 
